@@ -1,4 +1,3 @@
-require('dotenv').config();
 const { serveHTTP } = require("stremio-addon-sdk");
 
 // Add error handlers to prevent crashes
@@ -11,6 +10,5 @@ process.on('uncaughtException', (error) => {
 });
 
 const addonInterface = require("./src/addon");
-const port = process.env.PORT || 7000;
-serveHTTP(addonInterface, { port });
+serveHTTP(addonInterface, { port: 7000 });
 

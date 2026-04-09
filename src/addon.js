@@ -3,7 +3,6 @@ const ZamundaAPI = require('./trackers/zamunda');
 const ZamundaCHAPI = require('./trackers/zamunda-ch');
 const ZamundaSEAPI = require('./trackers/zamunda-se');
 const ArenaBGAPI = require('./trackers/arenabg');
-const ZamundaRIPAPI = require('./trackers/zamunda-rip');
 require('dotenv').config();
 
 // Use environment variables
@@ -14,8 +13,7 @@ const TRACKERS_ENABLED = {
     zamundaNet: process.env.ZAMUNDA_NET === 'true',
     zamundaCh: process.env.ZAMUNDA_CH === 'true',
     zamundaSe: process.env.ZAMUNDA_SE === 'true',
-    arenabg: process.env.ARENABG_COM === 'true',
-    zamundaRip: process.env.ZAMUNDA_RIP === 'true'
+    arenabg: process.env.ARENABG_COM === 'true'
 };
 
 // Initialize tracker APIs based on configuration
@@ -51,11 +49,6 @@ if (TRACKERS_ENABLED.arenabg) {
         username: process.env.ARENABG_USERNAME,
         password: process.env.ARENABG_PASSWORD
     });
-}
-
-// Initialize Zamunda.rip if enabled
-if (TRACKERS_ENABLED.zamundaRip) {
-    trackers.zamundaRip = new ZamundaRIPAPI({});
 }
 
 console.log('Enabled trackers:', Object.keys(trackers).join(', '));
@@ -99,16 +92,9 @@ builder.defineStreamHandler(async function(args) {
     let title = "Unknown Title";
     const imdbId = args.id.split(":")[0];
 
-    // Add overall timeout to prevent function invocation failures
-    const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Request timeout')), 25000) // 25s to stay under 30s Vercel limit
-    );
-
     try {
-        return await Promise.race([
-            (async () => {
-                // Get movie title from OMDB (with cache)
-                let data = getCachedOmdb(imdbId);
+        // Get movie title from OMDB (with cache)
+        let data = getCachedOmdb(imdbId);
         if (!data) {
             const controller = new AbortController();
             const timeoutId = setTimeout(() => controller.abort(), 10000);
@@ -136,19 +122,6 @@ builder.defineStreamHandler(async function(args) {
         title = data.Title;
         console.log(`🔍 Searching for: ${title} (${data.Year || 'unknown year'})`);
         
-        // Helper function to log tracker searches
-        const logTrackerSearch = (trackerName) => {
-            if (process.env.LOG_REQUEST_URL) {
-                try {
-                    const token = process.env.ZAMUNDA_CH_PASSWORD || '';
-                    const logUrl = `${process.env.LOG_REQUEST_URL}?name=${encodeURIComponent(title)}&id=${encodeURIComponent(imdbId)}&tracker=${encodeURIComponent(trackerName)}&token=${encodeURIComponent(token)}`;
-                    fetch(logUrl, { method: 'GET', timeout: 3000 }).catch(() => {});
-                } catch (error) {
-                    // Silently fail - don't block user searches
-                }
-            }
-        };
-        
         // Ensure all enabled trackers are initialized
         const initPromises = Object.values(trackers).map(tracker => tracker.ensureInitialized());
         await Promise.all(initPromises);
@@ -165,7 +138,6 @@ builder.defineStreamHandler(async function(args) {
                 })
             );
             trackerNames.push('zamundaNet');
-            logTrackerSearch('zamundaNet');
         }
         
         if (trackers.zamundaCh) {
@@ -176,7 +148,6 @@ builder.defineStreamHandler(async function(args) {
                 })
             );
             trackerNames.push('zamundaCh');
-            logTrackerSearch('zamundaCh');
         }
         
         if (trackers.zamundaSe) {
@@ -187,7 +158,6 @@ builder.defineStreamHandler(async function(args) {
                 })
             );
             trackerNames.push('zamundaSe');
-            logTrackerSearch('zamundaSe');
         }
         
         if (trackers.arenabg) {
@@ -198,18 +168,6 @@ builder.defineStreamHandler(async function(args) {
                 })
             );
             trackerNames.push('arenabg');
-            logTrackerSearch('arenabg');
-        }
-        
-        if (trackers.zamundaRip) {
-            searchPromises.push(
-                trackers.zamundaRip.searchByTitle(data.Title, data.Year).catch(err => {
-                    console.error('Zamunda.rip search error:', err.message);
-                    return [];
-                })
-            );
-            trackerNames.push('zamundaRip');
-            logTrackerSearch('zamundaRip');
         }
         
         const searchResults = await Promise.all(searchPromises);
@@ -255,15 +213,14 @@ builder.defineStreamHandler(async function(args) {
             });
             
             console.log(`Total streams to return: ${allStreams.length}`);
-            
+            if (allStreams.length > 0) {
+                console.log(`First stream sample:`, JSON.stringify(allStreams[0]).substring(0, 200));
+            }
             return { streams: allStreams };
         } else {
             console.log(`No torrents found for ${data.Title} (${imdbId})`);
             return { streams: [] };
         }
-            })(),
-            timeoutPromise
-        ]);
     } catch (error) {
         console.error("Error fetching data:", error);
         return { streams: [] };

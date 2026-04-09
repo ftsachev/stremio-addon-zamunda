@@ -6,16 +6,10 @@ const ZamundaMovieParser = require('../parsers/zamunda-movie-parser');
 
 class ZamundaCHAPI {
 	constructor(config) {
-		// Allow overriding the Zamunda.ch domain via env var `ZAMUNDA_CH_DOMAIN`.
-		// The env var may be a bare host (e.g. "torrent.example.xyz") or include scheme.
-		const envDomain = process.env.ZAMUNDA_CH_DOMAIN || 'zamunda.ch';
-		const cleanedDomain = String(envDomain).replace(/\/+$/g, '');
-		const baseUrl = cleanedDomain.startsWith('http') ? cleanedDomain : `https://${cleanedDomain}`;
-
 		this.config = {
 			username: config.username,
 			password: config.password,
-			baseUrl
+			baseUrl: 'https://zamunda.ch'
 		};
 		
 		// Initialize async components
@@ -116,11 +110,7 @@ class ZamundaCHAPI {
 	// Search method
 	async search(query) {
 		try {
-			const loggedIn = await this.ensureLoggedIn();
-			if (!loggedIn) {
-				console.error('❌ [Zamunda.ch] Not logged in; aborting search.');
-				return [];
-			}
+			await this.ensureLoggedIn();
 
 			const searchUrl = `${this.config.baseUrl}/catalogs/movies?letter=&t=movie&search=${encodeURIComponent(query).replace(/%20/g, '+')}&field=name&comb=yes`;
 			
