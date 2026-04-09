@@ -1,6 +1,5 @@
 const { parse } = require('node-html-parser');
 const parseTorrent = require('parse-torrent');
-const { extractResolution } = require('../utils/resolutionExtractor');
 
 class ZamundaMovieParser {
 	constructor(baseUrl = 'https://zamunda.net') {
@@ -57,7 +56,8 @@ class ZamundaMovieParser {
 							movies.push({
 								id: movieId,
 								title: title,
-								torrentUrl: null
+								torrentUrl: null,
+								magnetUrl: null
 							});
 						}
 					}
@@ -76,6 +76,9 @@ class ZamundaMovieParser {
 				}
 			});
 
+			// Extract magnet links
+			this.extractMagnetLinks(root, movies, html);
+
 			// Find and add seeders count - Multiple approaches for robustness
 			this.parseSeeders(root, movies, html);
 
@@ -89,6 +92,48 @@ class ZamundaMovieParser {
 		} catch (error) {
 			console.error('Error parsing movies:', error.message);
 			return [];
+		}
+	}
+
+	/**
+	 * Extract magnet links from HTML and associate them with movies
+	 * @param {Object} root - Parsed HTML root element
+	 * @param {Array} movies - Array of movie objects to update
+	 * @param {string} html - Raw HTML string
+	 */
+	extractMagnetLinks(root, movies, html) {
+		try {
+			// Look for magnet links in the HTML
+			// Common patterns: <a href="magnet:?xt=urn:btih:...">
+			const magnetLinks = root.querySelectorAll('a[href^="magnet:"]');
+			
+			if (magnetLinks.length > 0) {
+				magnetLinks.forEach((elem, i) => {
+					if (i < movies.length) {
+						const magnetHref = elem.getAttribute('href');
+						if (magnetHref && magnetHref.startsWith('magnet:')) {
+							movies[i].magnetUrl = magnetHref;
+						}
+					}
+				});
+				console.log(`[Zamunda] Extracted ${magnetLinks.length} magnet links`);
+			} else {
+				// Fallback: regex-based extraction if DOM parsing doesn't find magnet links
+				const magnetRegex = /href=["'](magnet:\?xt=urn:btih:[^"']+)["']/gi;
+				let match;
+				let index = 0;
+				
+				while ((match = magnetRegex.exec(html)) !== null && index < movies.length) {
+					movies[index].magnetUrl = match[1];
+					index++;
+				}
+				
+				if (index > 0) {
+					console.log(`[Zamunda] Extracted ${index} magnet links (via regex)`);
+				}
+			}
+		} catch (error) {
+			console.error('Error extracting magnet links:', error.message);
 		}
 	}
 
@@ -314,6 +359,7 @@ class ZamundaMovieParser {
 		return movies.map(movie => ({
 			title: `${movie.title}\n`,
 			url: movie.torrentUrl,
+			magnetUrl: movie.magnetUrl || null,
 			size: 'Unknown',
 			seeders: movie.seeders,
 			leechers: 'Unknown',
@@ -321,7 +367,44 @@ class ZamundaMovieParser {
 		}));
 	}
 
-	// Note: extractResolution is now imported from shared utility
+	/**
+	 * Extract resolution from torrent URL or title
+	 * @param {string} text - Text to extract resolution from
+	 * @returns {string} Resolution string
+	 */
+	extractResolution(text) {
+		if (!text) return 'Unknown';
+		
+		const textLower = text.toLowerCase();
+		
+		// Check for 3D content first
+		const is3D = textLower.includes('3d') || textLower.includes('halfou') || textLower.includes('hsbs');
+		
+		// Single comprehensive regex to find any resolution
+		const resolutionMatch = text.match(/\b(8K|2160p|4K|UHD|1440p|2K|1080p|FHD|FullHD|Full HD|720p|HD|576p|480p|SD|bluray|blu-ray|blu ray|brrip|bdrip|webrip|web-rip|web\.rip|dvd|pal|ntsc|xvid|divx)\b/i);
+		
+		if (resolutionMatch) {
+			const match = resolutionMatch[1].toLowerCase();
+			
+			// Map the match to standard resolution
+			if (match.match(/^(8k|2160p|4k|uhd)$/)) return is3D ? '4K(3D)' : '4K';
+			if (match.match(/^(1440p|2k)$/)) return is3D ? '1440p(3D)' : '1440p';
+			if (match.match(/^(1080p|fhd|fullhd|full hd)$/)) return is3D ? '1080p(3D)' : '1080p';
+			if (match.match(/^(720p|hd)$/)) return is3D ? '720p(3D)' : '720p';
+			if (match.match(/^576p$/)) return is3D ? '576p(3D)' : '576p';
+			if (match.match(/^(480p|sd)$/)) return is3D ? '480p(3D)' : '480p';
+			if (match.match(/^(bluray|blu-ray|blu ray)$/)) return is3D ? '1080p(3D)' : '1080p';
+			if (match.match(/^(brrip|bdrip|webrip|web-rip|web\.rip)$/)) return is3D ? '720p(3D)' : '720p';
+			if (match.match(/^(dvd|pal|ntsc|xvid|divx)$/)) return is3D ? '480p(3D)' : '480p';
+		}
+		
+		// If 3D but no resolution found
+		if (is3D) {
+			return '3D';
+		}
+		
+		return 'Unknown';
+	}
 
 	/**
 	 * Parse torrent buffer to extract metadata
@@ -394,7 +477,18 @@ class ZamundaMovieParser {
 					}
 				}
 
-				// Fallback: return basic stream info without parsing
+				// Fallback 1: Use magnet link if available
+				if (torrent.magnetUrl) {
+					console.log(`[Zamunda] Using magnet link as fallback for: ${torrent.title.trim()}`);
+					return {
+						name: `zamunda\n${resolution}`,
+						title: `${torrent.title}${torrent.hasBulgarianAudio ? ' 🇧🇬' : ''} 👤${torrent.seeders || 'Unknown'}`,
+						url: torrent.magnetUrl,
+						type: 'movie'
+					};
+				}
+
+				// Fallback 2: return basic stream info with torrent URL
 				return {
 					name: `zamunda\n${resolution}`,
 					title: `${torrent.title}${torrent.hasBulgarianAudio ? ' 🇧🇬' : ''} 👤${torrent.seeders || 'Unknown'}`,
@@ -403,7 +497,20 @@ class ZamundaMovieParser {
 				};
 			} catch (error) {
 				console.error(`Error processing torrent: ${error.message}`);
-					const resolution = extractResolution(torrent.title);
+				const resolution = this.extractResolution(torrent.title);
+				
+				// On error, try magnet link first
+				if (torrent.magnetUrl) {
+					console.log(`[Zamunda] Using magnet link after error for: ${torrent.title.trim()}`);
+					return {
+						name: `zamunda\r\n${resolution}`,
+						title: `${torrent.title}\r\n${torrent.hasBulgarianAudio ? ' 🇧🇬' : ''}`,
+						url: torrent.magnetUrl,
+						type: 'movie'
+					};
+				}
+				
+				// Final fallback to torrent URL
 				return {
 					name: `zamunda\r\n${resolution}`,
 					title: `${torrent.title}\r\n${torrent.hasBulgarianAudio ? ' 🇧🇬' : ''}`,

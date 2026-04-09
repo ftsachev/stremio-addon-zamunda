@@ -55,11 +55,15 @@ class ZamundaSEMovieParser {
 							title: title,
 							url: `${this.baseUrl}/details.php?id=${movieId}`,
 							torrentUrl: torrentUrl,
+							magnetUrl: null,
 							id: movieId
 						});
 					}
 				}
 			});
+
+			// Extract magnet links
+			this.extractMagnetLinks(root, movies, root.toString());
 
 			return movies;
 		} catch (error) {
@@ -68,10 +72,52 @@ class ZamundaSEMovieParser {
 		}
 	}
 
+	/**
+	 * Extract magnet links from HTML and associate them with movies
+	 * @param {Object} root - Parsed HTML root element
+	 * @param {Array} movies - Array of movie objects to update
+	 * @param {string} html - Raw HTML string
+	 */
+	extractMagnetLinks(root, movies, html) {
+		try {
+			// Look for magnet links in the HTML
+			const magnetLinks = root.querySelectorAll('a[href^="magnet:"]');
+			
+			if (magnetLinks.length > 0) {
+				magnetLinks.forEach((elem, i) => {
+					if (i < movies.length) {
+						const magnetHref = elem.getAttribute('href');
+						if (magnetHref && magnetHref.startsWith('magnet:')) {
+							movies[i].magnetUrl = magnetHref;
+						}
+					}
+				});
+				console.log(`[Zamunda.se] Extracted ${magnetLinks.length} magnet links`);
+			} else {
+				// Fallback: regex-based extraction if DOM parsing doesn't find magnet links
+				const magnetRegex = /href=["'](magnet:\?xt=urn:btih:[^"']+)["']/gi;
+				let match;
+				let index = 0;
+				
+				while ((match = magnetRegex.exec(html)) !== null && index < movies.length) {
+					movies[index].magnetUrl = match[1];
+					index++;
+				}
+				
+				if (index > 0) {
+					console.log(`[Zamunda.se] Extracted ${index} magnet links (via regex)`);
+				}
+			}
+		} catch (error) {
+			console.error('Error extracting magnet links:', error.message);
+		}
+	}
+
 	convertMoviesToTorrents(movies) {
 		return movies.map(movie => ({
 			title: movie.title,
 			sources: movie.torrentUrl,
+			magnetUrl: movie.magnetUrl || null,
 			infoHash: undefined
 		}));
 	}
@@ -81,18 +127,20 @@ class ZamundaSEMovieParser {
 		
 		for (const torrent of torrents) {
 			try {
-				const torrentBuffer = await getTorrentBuffer(torrent.sources);
+				let torrentBuffer = null;
+				let parsedTorrent = null;
 				
-				if (!torrentBuffer) {
-					console.warn(`Failed to download torrent for ${torrent.title}`);
-					continue;
+				// Try to download and parse the torrent
+				if (getTorrentBuffer) {
+					torrentBuffer = await getTorrentBuffer(torrent.sources);
 				}
-
-				const parsedTorrent = parseTorrent(torrentBuffer);
 				
-				if (!parsedTorrent || !parsedTorrent.infoHash) {
-					console.warn(`Failed to parse torrent for ${torrent.title}`);
-					continue;
+				if (torrentBuffer) {
+					try {
+						parsedTorrent = parseTorrent(torrentBuffer);
+					} catch (parseError) {
+						console.warn(`Failed to parse torrent for ${torrent.title}: ${parseError.message}`);
+					}
 				}
 
 				// Extract quality info from title
@@ -126,14 +174,45 @@ class ZamundaSEMovieParser {
 					bgFlag = '🇧🇬📄 ';
 				}
 
-				streams.push({
-					name: `zamunda.se\n${bgFlag}${quality}`,
-					title: torrent.title,
-					infoHash: parsedTorrent.infoHash.toLowerCase(),
-					sources: [`tracker:${this.baseUrl}/announce`]
-				});
+				// If we successfully parsed the torrent, use infoHash
+				if (parsedTorrent && parsedTorrent.infoHash) {
+					streams.push({
+						name: `zamunda.se\n${bgFlag}${quality}`,
+						title: torrent.title,
+						infoHash: parsedTorrent.infoHash.toLowerCase(),
+						sources: [`tracker:${this.baseUrl}/announce`]
+					});
+				} else {
+					// Fallback 1: Use magnet link if available
+					if (torrent.magnetUrl) {
+						console.log(`[Zamunda.se] Using magnet link as fallback for: ${torrent.title}`);
+						streams.push({
+							name: `zamunda.se\n${bgFlag}${quality}`,
+							title: torrent.title,
+							url: torrent.magnetUrl
+						});
+					} else {
+						// Fallback 2: Use torrent URL
+						console.warn(`[Zamunda.se] No infoHash or magnet for ${torrent.title}, using torrent URL`);
+						streams.push({
+							name: `zamunda.se\n${bgFlag}${quality}`,
+							title: torrent.title,
+							url: torrent.sources
+						});
+					}
+				}
 			} catch (error) {
 				console.error(`Error formatting stream for ${torrent.title}:`, error.message);
+				
+				// On error, try magnet link first
+				if (torrent.magnetUrl) {
+					console.log(`[Zamunda.se] Using magnet link after error for: ${torrent.title}`);
+					streams.push({
+						name: `zamunda.se\nSD`,
+						title: torrent.title,
+						url: torrent.magnetUrl
+					});
+				}
 			}
 		}
 
