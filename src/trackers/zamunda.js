@@ -1,8 +1,8 @@
 const axios = require('axios');
 const tough = require('tough-cookie');
 const { TextDecoder } = require('util');
-const TorrentFileManager = require('../utils/torrentFileManager');
-const ZamundaMovieParser = require('../parsers/zamunda-movie-parser');
+const TorrentFileManager = require('../utils/torrentFileManager.js');
+const ZamundaMovieParser = require('../parsers/zamunda-movie-parser.js');
 
 class ZamundaAPI {
 	constructor(config) {

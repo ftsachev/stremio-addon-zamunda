@@ -1,8 +1,8 @@
 const axios = require('axios');
 const tough = require('tough-cookie');
 const { TextDecoder } = require('util');
-const TorrentFileManager = require('../utils/torrentFileManager');
-const ZamundaSEMovieParser = require('../parsers/zamunda-se-movie-parser');
+const TorrentFileManager = require('../utils/torrentFileManager.js');
+const ZamundaSEMovieParser = require('../parsers/zamunda-se-movie-parser.js');
 
 class ZamundaSEAPI {
 	constructor(config) {
@@ -258,14 +258,23 @@ class ZamundaSEAPI {
 	async downloadTorrentFile(torrentUrl) {
 		try {
 			await this.ensureInitialized();
+			await this.login(); // Ensure we're logged in
+			
+			if (!this.isLoggedIn) {
+				console.error(`Cannot download torrent - not logged in to Zamunda.se`);
+				return null;
+			}
 			
 			// Check if we already have this torrent file in cache
 			const cachedBuffer = await this.torrentManager.getLocalPath(torrentUrl);
 			if (cachedBuffer) {
+				console.log(`Using cached torrent for ${torrentUrl}`);
 				return cachedBuffer;
 			}
 
-			// Download the torrent file with timeout
+			console.log(`Downloading torrent from ${torrentUrl}`);
+			
+			// Download the torrent file with timeout and authentication
 			const response = await this.client.get(torrentUrl, {
 				responseType: 'arraybuffer',
 				timeout: 10000, // 10 second timeout
@@ -274,10 +283,25 @@ class ZamundaSEAPI {
 				}
 			});
 
+			console.log(`Download response status: ${response.status}, size: ${response.data?.byteLength || 0} bytes`);
+
+			// Validate response
+			if (!response.data || response.data.byteLength === 0) {
+				console.error(`Empty response when downloading torrent from ${torrentUrl}`);
+				console.error(`Response status: ${response.status}, headers:`, response.headers);
+				return null;
+			}
+
 			// Save the torrent file to in-memory cache
-			return await this.torrentManager.saveTorrentFile(torrentUrl, response.data);
+			const savedBuffer = await this.torrentManager.saveTorrentFile(torrentUrl, response.data);
+			console.log(`Successfully cached torrent (${savedBuffer.byteLength} bytes)`);
+			return savedBuffer;
 		} catch (error) {
-			throw new Error(`Error downloading torrent file: ${error.message}`);
+			console.error(`Error downloading torrent file from ${torrentUrl}:`, error.message);
+			if (error.response) {
+				console.error(`Response status: ${error.response.status}`);
+				console.error(`Response headers:`, error.response.headers);
+			}
 			// Return null instead of throwing to allow graceful degradation
 			return null;
 		}
@@ -285,18 +309,40 @@ class ZamundaSEAPI {
 
 	// Format torrents as Stremio streams (bounded parallelism)
 	async formatTorrentsAsStreams(torrents) {
-		// Create a function to get torrent buffer for the parser
-		const getTorrentBuffer = async (torrentUrl) => {
-			// Try to get cached torrent buffer first
-			let torrentBuffer = await this.torrentManager.getLocalPath(torrentUrl);
-			if (!torrentBuffer) {
-				torrentBuffer = await this.downloadTorrentFile(torrentUrl);
+		// Create a function to get detail page HTML for the parser
+		const getDetailPageHtml = async (detailUrl) => {
+			try {
+				await this.ensureInitialized();
+				await this.login();
+				
+				if (!this.isLoggedIn) {
+					console.error(`Cannot fetch detail page - not logged in to Zamunda.se`);
+					return null;
+				}
+				
+				console.log(`Fetching detail page: ${detailUrl}`);
+				
+				const response = await this.client.get(detailUrl, {
+					timeout: 10000,
+					headers: {
+						'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+					},
+					responseType: 'arraybuffer'
+				});
+				
+				// Decode Windows-1251
+				const decoder = new TextDecoder('windows-1251');
+				const html = decoder.decode(response.data);
+				
+				return html;
+			} catch (error) {
+				console.error(`Error fetching detail page ${detailUrl}:`, error.message);
+				return null;
 			}
-			return torrentBuffer;
 		};
 
 		// Use the movie parser to format torrents as streams
-		return await this.movieParser.formatTorrentsAsStreams(torrents, getTorrentBuffer);
+		return await this.movieParser.formatTorrentsAsStreams(torrents, getDetailPageHtml);
 	}
 }
 

@@ -1,8 +1,8 @@
 const axios = require('axios');
 const tough = require('tough-cookie');
 const { TextDecoder } = require('util');
-const TorrentFileManager = require('../utils/torrentFileManager');
-const ArenaBGMovieParser = require('../parsers/arenabg-movie-parser');
+const TorrentFileManager = require('../utils/torrentFileManager.js');
+const ArenaBGMovieParser = require('../parsers/arenabg-movie-parser.js');
 
 class ArenaBGAPI {
 	constructor(config) {

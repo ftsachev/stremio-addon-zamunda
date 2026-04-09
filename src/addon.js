@@ -1,8 +1,8 @@
 const { addonBuilder } = require("stremio-addon-sdk");
-const ZamundaAPI = require('./trackers/zamunda');
-const ZamundaCHAPI = require('./trackers/zamunda-ch');
-const ZamundaSEAPI = require('./trackers/zamunda-se');
-const ArenaBGAPI = require('./trackers/arenabg');
+const ZamundaAPI = require('./trackers/zamunda.js');
+const ZamundaCHAPI = require('./trackers/zamunda-ch.js');
+const ZamundaSEAPI = require('./trackers/zamunda-se.js');
+const ArenaBGAPI = require('./trackers/arenabg.js');
 require('dotenv').config();
 
 // Use environment variables

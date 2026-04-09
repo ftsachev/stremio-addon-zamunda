@@ -1,5 +1,5 @@
 const { getRouter } = require("stremio-addon-sdk");
-const addonInterface = require("./src/addon");
+const addonInterface = require("./src/addon.js");
 
 const router = getRouter(addonInterface);
 
